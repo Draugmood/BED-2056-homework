@@ -1,0 +1,93 @@
+---
+title: "Effects of the COVID-19 Pandemic on Bankruptcies"
+author: "Morten S. Østrem"
+date: "10/12/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+library(tidyverse)
+library(rvest)
+library(purrr)
+library(lubridate)
+library(ggplot2)
+```
+
+```{r scrape}
+
+
+
+
+url_19 <- "https://w2.brreg.no/kunngjoring/kombisok.jsp?datoFra=01.01.2019&datoTil=31.12.2019&id_region=0&id_niva1=51&id_niva2=56&id_bransje1=0"
+url_20 <- "https://w2.brreg.no/kunngjoring/kombisok.jsp?datoFra=01.01.2020&datoTil=31.12.2020&id_region=0&id_niva1=51&id_niva2=56&id_bransje1=0"
+
+
+scrape_url <- function(url) {
+  # reads the html from the url
+  read_html(url) %>%
+  # find the right table and return nodes
+  html_nodes(xpath='//table') %>% 
+  html_nodes("table") %>% 
+  # creates a dataframe from the table contents
+  html_table() %>% 
+  # honestly not sure why this ends up being necessary, but it works
+  .[[1]] %>% 
+  # lots of empty columns, so choosing the ones with actual data/variables
+  select(., X2, X4, X6, X8) %>% 
+  # renaming them
+  rename(., "Business" = "X2", "OrgNum" = "X4", "Date" = "X6", "AnnType" = "X8") %>% 
+  # create a region variable by looking for letters in the OrgNum variable, and
+  # set the region to the value of said string once it is found
+  mutate(Region = ifelse(grepl("[A-Za-z]", OrgNum), OrgNum, NA)) %>% 
+  # fill in the region variable using the one value found in OrgNum
+  fill(Region) %>% 
+  # filter out all observations that are not strictly "Konkursåpning", private persons,
+  # as well as businesses from 
+  filter(AnnType == "Konkursåpning", nchar(OrgNum) != 6) %>% 
+  # reformat date variable using lubridate
+  mutate(Date = dmy(Date)) %>% 
+  # use said date variable to group by for each month, as well as for region
+  group_by(Region, Date = floor_date(Date, "month")) %>% 
+  # count amount of bankruptcies for each month per region
+  summarise(n = cumsum(n())) %>% 
+  # accumulate said count for the entire year
+  mutate("Cummulative" = cumsum(n))
+}
+
+# One data frame for each year
+df_19 <- scrape_url(url_19)
+df_20 <- scrape_url(url_20)
+
+# Combine the two dfs and wrangle for plotting
+comp_df <- rbind(df_19, df_20) %>%
+  mutate(Year = year(Date)) %>% 
+  mutate(Month = month(Date)) %>% 
+  select(Region, Cummulative, Month, Year) %>% 
+  # Removing Svalbard because only one bankruptcy. Business is booming in Svalbard.
+  filter(Region != "Svalbard")
+
+```
+
+
+
+## Bankruptcies in 2019
+
+The following plots show the cummulative bankruptcies of businesses in each region in Norway (except Svalbard).
+The data includes all bankruptcies in 2019, and all bankruptcies so far in 2020.
+
+
+```{r plot, include=TRUE}
+ggplot(comp_df, aes(Month, Cummulative, group = Year, color = factor(Year))) +
+  geom_line() +
+  facet_wrap(~Region) +
+  xlab("Month (Jan - Dec)") +
+  ylab("Cummulative Regional Bankruptcies") +
+  labs(color = "Year") +
+  theme(axis.text.x=element_blank(),
+        axis.ticks.x=element_blank(),
+        strip.text=element_text(size=9, face="bold"),
+        axis.title=element_text(size=14, face="bold"))
+```
+
+There appears to be no increase in the number of bankrupt businesses due to the COVID-19 pandemic and its repercussions.
